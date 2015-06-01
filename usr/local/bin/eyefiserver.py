@@ -59,8 +59,6 @@ import signal
 from datetime import datetime
 import ConfigParser
 
-DEFAULTS = {'upload_uid': '-1', 'upload_gid': '-1', 'geotag_enable': '0'}
-
 import math
 
 class Daemon:
@@ -300,9 +298,6 @@ consoleHandler.setFormatter(eyeFiLoggingFormat)
 eyeFiLogger.addHandler(consoleHandler)
 
 
-def fix_ownership(path, uid, gid):
-   if uid != -1 and gid != -1:
-       os.chown(path, uid, gid)
 
 
 # Eye Fi XML SAX ContentHandler
@@ -356,6 +351,14 @@ class EyeFiServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
             except select.error, e:
                 if e[0] != errno.EINTR:
                     raise e
+                else:
+                    eyeFiLogger.info("Swallowing exception: %s" % e)
+            except socket.error, e:
+                if e[0] != errno.EBADF:
+                    raise e
+                else:
+                    eyeFiLogger.info("Swallowing exception, perhaps socket closed: %s" % e)
+
 
     def reload_config(self, signum, frame):
         try:
@@ -369,8 +372,10 @@ class EyeFiServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
         try:
             eyeFiLogger.info("Eye-Fi server stopped ")
             self.stop()
+            self.socket.close()
         except:
             eyeFiLogger.error("Error stopping server")
+            traceback.print_exc()
 
     def server_bind(self):
 
@@ -538,7 +543,7 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
 
 
             # If the URL is upload and there is no SOAPAction the card is ready to send a picture to me
-            if((self.path == "/api/soap/eyefilm/v1/upload") and (SOAPAction == "")):
+            if((self.path == "/api/soap/eyefilm/v1/upload") or (SOAPAction == "urn:UploadPhoto")):
                 eyeFiLogger.debug("Got upload request")
                 response = self.uploadPhoto(postData)
                 contentLength = len(response)
@@ -642,6 +647,10 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
         gid = self.server.config.getint('EyeFiServer','upload_gid')
         file_mode = self.server.config.get('EyeFiServer','upload_file_mode')
         dir_mode = self.server.config.get('EyeFiServer','upload_dir_mode')
+        uid = 0
+        gud = 0
+        file_mod = ""
+        dir_mode = ""
         eyeFiLogger.debug("Using uid/gid %d/%d"%(uid,gid))
         eyeFiLogger.debug("Using file_mode " + file_mode)
         eyeFiLogger.debug("Using dir_mode " + dir_mode)
@@ -665,8 +674,9 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
         eyeFiLogger.debug("Extracting TAR file " + imageTarPath)
         try:
             imageTarfile = tarfile.open(imageTarPath)
-        except ReadError, error:
+        except:
             eyeFiLogger.error("Failed to open %s" % imageTarPath)
+            traceback.print_exc()
             raise
 
         for member in imageTarfile.getmembers():
@@ -682,7 +692,8 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
             eyeFiLogger.debug("Creating folder " + uploadDir)
             if not os.path.isdir(uploadDir):
                 os.makedirs(uploadDir)
-                fix_ownership(uploadDir, uid, gid)
+                if uid != 0 and gid != 0:
+                    os.chown(uploadDir, uid, gid)
                 if file_mode != "":
                     os.chmod(uploadDir, int(dir_mode))
 
@@ -690,7 +701,8 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
             imagePath = os.path.join(uploadDir, member.name)
             eyeFiLogger.debug("imagePath " + imagePath)
             os.utime(imagePath, (member.mtime + timeoffset, member.mtime + timeoffset))
-            fix_ownership(imagePath, uid, gid)
+            if uid != 0 and gid != 0:
+                os.chown(imagePath, uid, gid)
             if file_mode != "":
                 os.chmod(imagePath, int(file_mode))
 
@@ -706,7 +718,8 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
                         xmpPath=os.path.join(uploadDir, xmpName)
                         eyeFiLogger.debug("Writing XMP file " + xmpPath)
                         self.writexmp(xmpPath,float(loc['location']['lat']),float(loc['location']['lng']))
-                        fix_ownership(xmpPath, uid, gid)
+                        if uid != 0 and gid != 0:
+                            os.chown(xmpPath, uid, gid)
                         if file_mode != "":
                             os.chmod(xmpPath, int(file_mode))
                 except:
@@ -927,7 +940,7 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
         transfermodetimestampElement.appendChild(transfermodetimestampElementText)
 
         upsyncallowedElement = doc.createElement("upsyncallowed")
-        upsyncallowedElementText = doc.createTextNode("true")
+        upsyncallowedElementText = doc.createTextNode("false")
         upsyncallowedElement.appendChild(upsyncallowedElementText)
 
         startSessionResponseElement.appendChild(credentialElement)
@@ -948,7 +961,7 @@ def stopEyeFi():
     configfile = sys.argv[2]
     eyeFiLogger.info("Reading config " + configfile)
 
-    config = ConfigParser.SafeConfigParser(defaults=DEFAULTS)
+    config = ConfigParser.SafeConfigParser()
     config.read(configfile)
 
     port = config.getint('EyeFiServer','host_port')
@@ -965,7 +978,7 @@ def runEyeFi():
     configfile = sys.argv[2]
     eyeFiLogger.info("Reading config " + configfile)
 
-    config = ConfigParser.SafeConfigParser(defaults=DEFAULTS)
+    config = ConfigParser.SafeConfigParser({'geotag_enable': '0'})
     config.read(configfile)
 
     # open file logging
