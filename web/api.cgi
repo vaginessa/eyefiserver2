@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 NAME=eyefiserver
 DAEMON_NAME=EyeFiServer
 CONFIG=/etc/$NAME.conf
