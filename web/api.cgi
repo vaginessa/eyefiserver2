@@ -11,7 +11,7 @@ CAT=/bin/cat
 SED=/bin/sed
 CP=/bin/cp
 RM=/bin/rm
-READLINK=/usr/bin/readlink
+READLINK=/bin/readlink
 SUDOUSR=/opt/bin/sudo
 SUDOOPT=/usr/bin/sudo
 function getparam {
