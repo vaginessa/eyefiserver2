@@ -3,3 +3,9 @@
 /qpkg/build
 /qpkg/config
 /qpkg/shared
+
+# ignore_for_eclipse
+/bin/
+.classpath
+.project
+
